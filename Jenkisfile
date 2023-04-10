@@ -1,0 +1,103 @@
+pipeline {
+    agent { label 'Node2' }
+    environment {
+        DEV_IMAGE = 'my-app-vue3-dev'
+        QA_IMAGE = 'my-app-vue3-qa'
+        PROD_IMAGE = 'my-app-vue3-prod'
+    }
+     stages {
+        stage('Build') {
+            steps {
+                echo 'Desarrollo envía cambios al repositorio ya sea de Backend o Frontend.'
+                script {
+                    // Eliminar el directorio existente si existe
+                    sh 'rm -rf practica_vue3 || true'
+                    // repositorio
+                    sh 'git clone https://github.com/jhosep-lu/practica_vue3.git'
+                    // Cambiar al directorio del proyecto
+                    dir('practica_vue3') {
+                        // Crear el Dockerfile con la versión correcta de Node.js
+                        sh '''
+                        echo "FROM node:18.13-alpine" > Dockerfile
+                        echo "WORKDIR /app" >> Dockerfile
+                        echo "COPY . ." >> Dockerfile
+                        echo "RUN npm ci" >> Dockerfile
+                        echo "EXPOSE 8080" >> Dockerfile
+                        echo "CMD [\\"npm\\", \\"run\\", \\"dev\\"]" >> Dockerfile
+                        '''
+                    }
+                }
+            }
+        }
+        stage('Deploy to Development Environment') {
+            steps {
+                echo 'Jenkins automáticamente empieza el despliegue en el ambiente de desarrollo.'
+                script {
+                    dir('practica_vue3') {
+                        // Construir y ejecutar la imagen de Docker para el ambiente de desarrollo
+                        sh "docker build -t ${DEV_IMAGE} ."
+                        sh "docker run -d --name dev-container -p 8080:5173 ${DEV_IMAGE}"
+                    }
+                }
+            }
+        }
+        stage('Test Development Environment') {
+            steps {
+                echo 'Se ejecutan algunos tests.'
+                script {
+                    // Esperar 5 segundos para asegurarse de que el servidor esté en línea
+                    sh 'sleep 5'
+                    // Ejecutar pruebas con curl
+                    sh 'curl -sSf http://192.168.20.160:8080/health || exit 1'
+                }
+            }
+        }
+        stage('Deploy to QA Environment') {
+            when {
+                expression { currentBuild.result == null }
+            }
+            steps {
+                echo 'Continuar con el deploy en el ambiente de QA.'
+                script {
+                    // Construir y ejecutar la imagen de Docker para el ambiente de QA
+                    sh "docker tag ${DEV_IMAGE} ${QA_IMAGE}"
+                    sh "docker run -d --name qa-container -p 8079:5173 ${QA_IMAGE}"
+                }
+            }
+        }
+        stage('Test QA Environment') {
+            steps {
+                echo 'Ejecutar pruebas en el ambiente de QA.'
+                script {
+                    // Esperar 5 segundos para asegurarse de que el servidor esté en línea
+                    sh 'sleep 5'
+                    // Ejecutar pruebas con curl
+                    sh 'curl -sSf http://192.168.20.160:8079/health || exit 1'
+                }
+            }
+        }
+        stage('Deploy to Production Environment') {
+            when {
+                expression { currentBuild.result == null }
+            }
+            steps {
+                echo 'Continuar con el despliegue en su ambiente de Producción.'
+                script {
+                    // Construir y ejecutar la imagen de Docker para el ambiente de producción
+                    echo 'Iniciando construcción y ejecución de la imagen de Docker para el ambiente de producción...'
+                    sh "docker tag ${QA_IMAGE} ${PROD_IMAGE}"
+                    sh "docker run -d --name prod-container -p 9090:5173 ${PROD_IMAGE}"
+                    echo 'Construcción y ejecución de la imagen de Docker para el ambiente de producción finalizada.'
+                }
+            }
+        }
+    }
+    post {
+        always {
+            echo 'Limpiar recursos de Docker'
+            sh 'docker rm -f dev-container || true'
+            sh 'docker rm -f qa-container || true'
+            sh 'docker rm -f prod-container || true'
+        }
+    }
+}
